@@ -1,16 +1,16 @@
-from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv  # provided by the python-dotenv package
+"""
+ Author: hangzhang
+ Created on Sat Mar 28 2026
+ Description: langchain 的语言模型示例，展示了如何使用 ChatOpenAI 模型进行文本生成，
+ 包括直接输出、流式输出和消息类型的流式输出三种不同的调用方式
+
+"""
+
 from langchain_core.messages import HumanMessage, SystemMessage
-import os
+from langchain_getmodel import get_model
 
+model = get_model()
 
-load_dotenv()
-
-api_key = os.getenv("OPENAI_API_KEY")
-base_url = os.getenv("OPENAI_BASE_URL")
-model_name = os.getenv("OPENAI_MODEL")
-
-model = ChatOpenAI(model=model_name, api_key=api_key, base_url=base_url, temperature=0)
 # 直接输出
 # response = model.invoke("请介绍一下你自己")
 # print(response.content)
@@ -27,3 +27,5 @@ chunks = model.stream(messages)
 
 for chunk in chunks:
     print(chunk.content, end="", flush=True)
+    
+    

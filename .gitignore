@@ -45,7 +45,6 @@ Thumbs.db
 
 # Environment variables / secrets
 .env
-.env.*
 
 # Optional local databases
 *.sqlite3
