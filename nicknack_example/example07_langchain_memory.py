@@ -8,15 +8,17 @@ Description: langchain 短期记忆示例，展示了如何使用 RunnableWithMe
 from langchain_core.runnables import RunnableLambda
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import InMemoryChatMessageHistory
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate,MessagesPlaceholder
 from langchain_getmodel import get_model
 
 model = get_model()
 
-prompt_template = PromptTemplate.from_template(
-    """你是一名中国厨师，擅长介绍各种菜肴的做法。
-    以下是你和用户的对话历史：{history}，
-    请根据对话历史和用户输入{input} 回答。"""
+prompt_template = ChatPromptTemplate.from_messages(
+    [
+        ("system", "你是一名中国厨师，擅长介绍各种菜肴的做法。"),
+        MessagesPlaceholder("history_data"),
+        ("user", "请根据对话历史和用户输入{input} 回答。")
+    ]
 )
 
 
@@ -44,7 +46,7 @@ memory_chain = RunnableWithMessageHistory(
     chain,
     get_history,
     input_messages_key="input",
-    history_messages_key="history",
+    history_messages_key="history_data",
 )
 
 # 模拟一个对话场景，用户输入一些问题，调用 memory_chain 生成响应，并将用户输入和模型响应添加到历史中
