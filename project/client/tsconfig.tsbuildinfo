@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/chathistorydrawer.tsx","./src/components/knowledgetable.tsx","./src/components/leftsidebar.tsx","./src/components/materialicon.tsx","./src/components/topheader.tsx","./src/data/mockdata.ts","./src/routes/chatpage.tsx","./src/routes/knowledgebasepage.tsx"],"version":"5.9.3"}
