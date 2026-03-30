@@ -1,3 +1,4 @@
+
 """
  Author: hangzhang
  Created on Sat Mar 28 2026
@@ -8,7 +9,7 @@
 import os
 
 from dotenv import load_dotenv
-from langchain_community.embeddings import DashScopeEmbeddings
+from langchain_community.embeddings import DashScopeEmbeddings,ZhipuAIEmbeddings
 
 # 加载同目录下的 .env 文件
 load_dotenv()
@@ -19,5 +20,12 @@ embeddings = DashScopeEmbeddings(
     model="text-embedding-v1", dashscope_api_key=os.getenv("DASHSCOPE_API_KEY")
 )
 
+zhipu_embeddings = ZhipuAIEmbeddings(
+    model="embedding-3", api_key=os.getenv("ZHIPUAI_API_KEY")
+)
+
 def get_embedding():
     return embeddings
+
+def get_zhipu_embedding():
+    return zhipu_embeddings

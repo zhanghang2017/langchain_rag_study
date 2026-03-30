@@ -13,7 +13,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_chroma import Chroma
 
 # 用于向量化文本的嵌入模型，这里使用了之前定义的 get_embedding 函数来获取嵌入模型实例
-from langchain_getEbedding import get_embedding
+from langchain_getEbedding import get_zhipu_embedding
 
 # 拆分文本的工具，可以将长文本拆分成更小的块，方便后续处理，比如存储到向量数据库中，或者作为模型输入
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -21,7 +21,7 @@ from langchain_core.documents import Document
 
 
 # 初始化嵌入模型
-embeddings = get_embedding()
+embeddings = get_zhipu_embedding()
 
 file_path = os.path.join(os.getcwd(), "files/Modern Economic History of China.pdf")
 
@@ -69,23 +69,24 @@ def vector_store_data(
             print(f"当前页切分成了 {len(chunks)} 条 ，正在存储到向量数据库中...")
             docs = to_store_doc(chunks[:-1], file_path)
             vector_store.add_documents(docs)
-            remain_page = chunks[-1]
+            remain_buffer = chunks[-1]
         else:
             # 如果切分后的块数量不大于1，说明当前页内容较短，可以直接保留为下一轮的前页内容
-            remain_page = current_page_content
+            remain_buffer = current_page_content
 
-    if remain_page:
+    if remain_buffer:
         # 处理最后剩余的内容，确保不会丢失
-        chunks = text_splitter.split_text(remain_page)
+        chunks = text_splitter.split_text(remain_buffer)
         # 向量化存储向量库
         print(f"正在存储块到向量数据库中: {len(chunks)}条...")
         docs = to_store_doc(chunks, file_path)
         vector_store.add_documents(docs)
 
 
-vector_store_data(
-    file_path=file_path,
-    collection_name="pdf_docs",
-    persist_directory="./local_db",
-    embedding_function=embeddings,
-)
+# 向量化存储数据到向量数据库中，collection_name 是向量数据库中的集合名称，persist_directory 是向量数据库的持久化目录，embedding_function 是用于向量化文本的嵌入模型实例
+# vector_store_data(
+#     file_path=file_path,
+#     collection_name="pdf_docs",
+#     persist_directory="./local_db",
+#     embedding_function=embeddings,
+# )
