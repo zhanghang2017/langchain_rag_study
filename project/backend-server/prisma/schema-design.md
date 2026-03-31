@@ -2,16 +2,18 @@
 
 目标: 每张表只保留跑通核心流程所需字段。
 
-核心流程: 浏览器指纹识别 -> 上传文件 -> 异步入库 -> 会话聊天 -> 消息记录。
+核心流程: 用户 ID 识别 -> 上传文件 -> 异步入库 -> 会话聊天 -> 消息记录。
+
+约定: 对外统一使用 `userId` 命名；当前 `userId` 的实际值就是浏览器指纹。
 
 ## 1) app_users
 
-Purpose: 浏览器指纹用户表。
+Purpose: 用户表。
 
 Columns:
 
-- id: 主键。
-- browser_fingerprint_hash: 指纹哈希，唯一。
+- id: 主键，直接存储 `userId`（当前值为浏览器指纹）。
+- browser_fingerprint_hash: 兼容字段，保存与 `id` 相同的指纹值。
 - created_at: 创建时间。
 
 ## 2) knowledge_files
@@ -21,11 +23,11 @@ Purpose: 上传文件主表。
 Columns:
 
 - id: 文件 UUID。
-- user_id: 所属用户。
+- user_id: 所属用户 ID（当前值为浏览器指纹）。
 - file_name: 文件名。
 - file_size_bytes: 文件大小。
 - storage_path: 存储路径。
-- parse_status: 入库状态(pending/processing/ready/failed)。
+- parse_status: 入库状态，与 ingestion_tasks.status 保持一致(queued/running/success/failed/cancelled)。
 - uploaded_at: 上传时间。
 
 ## 3) ingestion_tasks
@@ -35,7 +37,7 @@ Purpose: 异步入库任务表。
 Columns:
 
 - id: 任务 UUID。
-- user_id: 所属用户。
+- user_id: 所属用户 ID（当前值为浏览器指纹）。
 - file_id: 对应文件。
 - status: 任务状态(queued/running/success/failed/cancelled)。
 - progress: 进度(0-100)。
@@ -61,7 +63,7 @@ Purpose: 会话头表(对话容器)。
 Columns:
 
 - id: 会话 UUID。
-- user_id: 所属用户。
+- user_id: 所属用户 ID（当前值为浏览器指纹）。
 - title: 会话标题。
 - created_at: 创建时间。
 

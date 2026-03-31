@@ -40,6 +40,24 @@ npm run prisma:generate
 npm run prisma:studio
 ```
 
+## 6) Run API server
+
+```bash
+npm run start
+```
+
+## 7) API spec
+
+See: `docs/api-spec.md`
+
+## 8) Team functional guide
+
+See: `docs/node-service-functional-guide.md`
+
+## 9) Per-file technical docs
+
+See: `doc/README.md`
+
 ## Current models
 
 - AppUser

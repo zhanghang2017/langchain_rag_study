@@ -1,7 +1,14 @@
 import { libraryRows } from "../data/mockData";
 import MaterialIcon from "./MaterialIcon";
+import type { UploadLibraryRow } from "../workservice/uploadWorkservice";
 
-const KnowledgeTable = () => {
+type KnowledgeTableProps = {
+  rows?: UploadLibraryRow[];
+};
+
+const KnowledgeTable = ({ rows }: KnowledgeTableProps) => {
+  const displayRows = rows || libraryRows;
+
   return (
     <div>
       <div className="mb-6 flex items-center justify-between">
@@ -21,7 +28,7 @@ const KnowledgeTable = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
-            {libraryRows.map((row) => (
+            {displayRows.map((row) => (
               <tr key={row.name} className="group transition-colors hover:bg-slate-50/50">
                 <td className="py-4">
                   <div className="flex items-center gap-3">
@@ -33,7 +40,11 @@ const KnowledgeTable = () => {
                 <td className="py-4">
                   <span
                     className={`text-[11px] font-bold uppercase tracking-tight ${
-                      row.statusTone === "success" ? "text-emerald-600" : "text-amber-600"
+                      row.statusTone === "success"
+                        ? "text-emerald-600"
+                        : row.statusTone === "warning"
+                          ? "text-amber-600"
+                          : "text-rose-600"
                     }`}
                   >
                     {row.status}
@@ -45,7 +56,7 @@ const KnowledgeTable = () => {
           </tbody>
         </table>
         <div className="flex items-center justify-between border-t border-slate-50 py-8">
-          <p className="text-xs text-slate-400">3 files listed</p>
+          <p className="text-xs text-slate-400">{displayRows.length} files listed</p>
           <div className="flex gap-4">
             <button className="text-xs font-semibold text-slate-400 hover:text-black">Previous</button>
             <button className="text-xs font-semibold text-slate-400 hover:text-black">Next</button>

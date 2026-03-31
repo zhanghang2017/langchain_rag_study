@@ -7,13 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum ParseStatus {
-  pending
-  processing
-  ready
-  failed
-}
-
 enum TaskStatus {
   queued
   running
@@ -28,7 +21,7 @@ enum MessageRole {
 }
 
 model AppUser {
-  id                     Int             @id @default(autoincrement())
+  id                     String          @id
   browserFingerprintHash String          @unique @map("browser_fingerprint_hash")
   createdAt              DateTime        @default(now()) @map("created_at")
   knowledgeFiles         KnowledgeFile[]
@@ -40,23 +33,25 @@ model AppUser {
 
 model KnowledgeFile {
   id            String          @id @default(uuid())
-  userId        Int             @map("user_id")
+  userId        String          @map("user_id")
   fileName      String          @map("file_name")
+  contentMd5    String?         @map("content_md5")
   fileSizeBytes Int             @map("file_size_bytes")
   storagePath   String          @map("storage_path")
-  parseStatus   ParseStatus     @default(pending) @map("parse_status")
+  parseStatus   TaskStatus      @default(queued) @map("parse_status")
   uploadedAt    DateTime        @default(now()) @map("uploaded_at")
   user          AppUser         @relation(fields: [userId], references: [id], onDelete: Cascade)
   ingestionTasks IngestionTask[]
   fileChunks    FileChunk[]
 
+  @@unique([userId, contentMd5], map: "uk_knowledge_files_user_md5")
   @@index([userId, parseStatus, uploadedAt], map: "idx_knowledge_files_user_status_uploaded")
   @@map("knowledge_files")
 }
 
 model IngestionTask {
   id           String       @id @default(uuid())
-  userId       Int          @map("user_id")
+  userId       String       @map("user_id")
   fileId       String       @map("file_id")
   status       TaskStatus   @default(queued)
   progress     Float        @default(0)
@@ -85,7 +80,7 @@ model FileChunk {
 
 model ChatSession {
   id        String        @id @default(uuid())
-  userId    Int           @map("user_id")
+  userId    String        @map("user_id")
   title     String?
   createdAt DateTime      @default(now()) @map("created_at")
   user      AppUser       @relation(fields: [userId], references: [id], onDelete: Cascade)
