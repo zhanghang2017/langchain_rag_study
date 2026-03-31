@@ -4,6 +4,8 @@ function resolveRequiredUserId(data: { userId?: string; browserFingerprintHash?:
   return data.userId ?? data.browserFingerprintHash;
 }
 
+const md5HexSchema = z.string().regex(/^[a-fA-F0-9]{32}$/);
+
 // Shared primitives reused across multiple query/body schemas.
 export const fingerprintSchema = z
   .object({
@@ -21,7 +23,19 @@ export const uploadBodySchema = z
   .object({
     userId: z.string().min(1).optional(),
     browserFingerprintHash: z.string().min(1).optional(),
-    contentHash: z.string().regex(/^[a-fA-F0-9]{64}$/).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (!resolveRequiredUserId(data)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["userId"], message: "Required" });
+    }
+  })
+  .transform((data) => ({ userId: resolveRequiredUserId(data)! }));
+
+export const filePrecheckBodySchema = z
+  .object({
+    userId: z.string().min(1).optional(),
+    browserFingerprintHash: z.string().min(1).optional(),
+    contentMd5: md5HexSchema,
   })
   .superRefine((data, ctx) => {
     if (!resolveRequiredUserId(data)) {
@@ -30,12 +44,12 @@ export const uploadBodySchema = z
   })
   .transform((data) => ({
     userId: resolveRequiredUserId(data)!,
-    contentHash: data.contentHash,
+    contentMd5: data.contentMd5.toLowerCase(),
   }));
 
 export const chunkUploadInitBodySchema = z
   .object({
-    uploadId: z.string().regex(/^[a-fA-F0-9]{64}$/),
+    uploadId: md5HexSchema,
     userId: z.string().min(1).optional(),
     browserFingerprintHash: z.string().min(1).optional(),
     fileName: z.string().min(1),
@@ -56,16 +70,16 @@ export const chunkUploadInitBodySchema = z
   }));
 
 export const chunkUploadBodySchema = z.object({
-  uploadId: z.string().regex(/^[a-fA-F0-9]{64}$/),
+  uploadId: md5HexSchema,
   chunkIndex: z.coerce.number().int().min(0),
 });
 
 export const chunkUploadStatusQuerySchema = z.object({
-  uploadId: z.string().regex(/^[a-fA-F0-9]{64}$/),
+  uploadId: md5HexSchema,
 });
 
 export const chunkUploadCompleteBodySchema = z.object({
-  uploadId: z.string().regex(/^[a-fA-F0-9]{64}$/),
+  uploadId: md5HexSchema,
 });
 
 // Shared enum for knowledge-file parse lifecycle; kept aligned with ingestion task status.

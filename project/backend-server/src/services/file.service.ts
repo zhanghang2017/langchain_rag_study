@@ -1,5 +1,6 @@
+import { Prisma } from "@prisma/client";
 import { createApiError } from "../common/errors";
-import { access, mkdir, open, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, open, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -51,6 +52,27 @@ function getUserUploadDir(userId: string) {
 }
 
 /**
+ * 基于已落盘的 .part 文件计算当前会话已收到的分片索引。
+ * @param uploadId 上传会话 ID。
+ * @param totalChunks 总分片数，用于过滤非法分片名。
+ * @returns 已上传分片索引数组（升序）。
+ */
+async function collectReceivedChunkIndices(uploadId: string, totalChunks: number) {
+  const sessionDir = getChunkSessionDir(uploadId);
+
+  try {
+    const entries = await readdir(sessionDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".part"))
+      .map((entry) => Number.parseInt(entry.name.slice(0, -5), 10))
+      .filter((index) => Number.isInteger(index) && index >= 0 && index < totalChunks)
+      .sort((left, right) => left - right);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * 读取分片上传清单。
  * @param uploadId 上传会话 ID。
  * @returns 分片清单对象。
@@ -61,9 +83,12 @@ async function readChunkManifest(uploadId: string): Promise<ChunkUploadManifest>
   try {
     const content = await readFile(manifestPath, "utf8");
     const parsed = JSON.parse(content) as ChunkUploadManifest;
+    const receivedChunks = await collectReceivedChunkIndices(uploadId, parsed.totalChunks);
+
     return {
       ...parsed,
       userId: parsed.userId ?? parsed.browserFingerprintHash ?? "",
+      receivedChunks,
     };
   } catch {
     throw createApiError(404, "UPLOAD_SESSION_NOT_FOUND", "Upload session not found");
@@ -81,27 +106,16 @@ async function writeChunkManifest(manifest: ChunkUploadManifest) {
 }
 
 /**
- * 处理已落盘的临时文件：计算 MD5、按用户去重、写入正式文件并创建任务。
+ * 处理已落盘的临时文件：计算 MD5、写入正式文件并创建任务。
  * @param payload 处理参数（用户 ID、临时文件路径、原始文件名、文件大小）。
- * @param payload.contentSha256 客户端预计算的 SHA-256 哈希，提供时与服务端所计算值比对以验证传输完整性。
- * @returns 上传结果（去重命中时 task 为 null，未命中时返回新建 task）。
+ * @returns 上传结果。
  */
 async function processUploadedTempFile(payload: {
   userId: string;
   tempFilePath: string;
   originalName: string;
   sizeBytes: number;
-  contentSha256?: string;
 }) {
-  // 若客户端提供了 SHA-256，则在落盘后验证完整性
-  if (payload.contentSha256) {
-    const serverSha256 = await computeFileSha256(payload.tempFilePath);
-    if (serverSha256 !== payload.contentSha256) {
-      await unlink(payload.tempFilePath).catch(() => {});
-      throw createApiError(422, "CONTENT_HASH_MISMATCH", "File integrity check failed: SHA-256 mismatch");
-    }
-  }
-
   const contentMd5 = await computeFileMd5(payload.tempFilePath);
   const ext = path.extname(payload.originalName || "") || ".bin";
   const storageRelativePath = path
@@ -109,22 +123,9 @@ async function processUploadedTempFile(payload: {
     .replace(/\\/g, "/");
   const storageAbsolutePath = path.resolve(process.cwd(), storageRelativePath);
 
-  const user = await userRepository.upsertUserById(payload.userId);
-  const existed = await fileRepository.findByUserIdAndMd5(user.id, contentMd5);
-  if (existed) {
-    await unlink(payload.tempFilePath).catch(() => {
-      // Ignore temp-file cleanup errors on dedupe path.
-    });
-
-    return {
-      deduplicated: true,
-      file: existed,
-      task: null,
-    };
-  }
-
   await mkdir(getUserUploadDir(payload.userId), { recursive: true });
 
+  let movedToStorage = false;
   try {
     await access(storageAbsolutePath);
     await unlink(payload.tempFilePath).catch(() => {
@@ -132,15 +133,33 @@ async function processUploadedTempFile(payload: {
     });
   } catch {
     await rename(payload.tempFilePath, storageAbsolutePath);
+    movedToStorage = true;
   }
 
-  const result = await fileRepository.createFileAndTask({
-    userId: payload.userId,
-    fileName: payload.originalName,
-    contentMd5,
-    fileSizeBytes: payload.sizeBytes,
-    storagePath: storageRelativePath,
-  });
+  let result;
+  try {
+    result = await fileRepository.createFileAndTask({
+      userId: payload.userId,
+      fileName: payload.originalName,
+      contentMd5,
+      fileSizeBytes: payload.sizeBytes,
+      storagePath: storageRelativePath,
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      if (movedToStorage) {
+        await unlink(storageAbsolutePath).catch(() => {
+          // Ignore cleanup errors for duplicate uploads.
+        });
+      }
+
+      throw createApiError(409, "FILE_ALREADY_EXISTS", "File already exists for current user", [
+        { path: "contentMd5", message: "Duplicate file. Call precheck before upload." },
+      ]);
+    }
+
+    throw error;
+  }
 
   // Fire-and-forget dispatch: upload call returns success immediately.
   void aiService.dispatchIngestionTask({
@@ -154,22 +173,6 @@ async function processUploadedTempFile(payload: {
     file: result.file,
     task: result.task,
   };
-}
-
-/**
- * 以流式方式计算文件 SHA-256，与客户端一致以支持完整性校验。
- * @param filePath 文件绝对路径。
- * @returns 小写十六进制 SHA-256 字符串。
- */
-async function computeFileSha256(filePath: string) {
-  return new Promise<string>((resolve, reject) => {
-    const sha256 = crypto.createHash("sha256");
-    const stream = createReadStream(filePath);
-
-    stream.on("data", (chunk) => sha256.update(chunk));
-    stream.on("error", reject);
-    stream.on("end", () => resolve(sha256.digest("hex")));
-  });
 }
 
 /**
@@ -199,6 +202,27 @@ export async function identifyUser(userId: string) {
 }
 
 /**
+ * 上传前检查当前用户是否已存在相同内容文件。
+ * @param payload 预检参数。
+ * @returns 去重命中结果与已有文件摘要。
+ */
+export async function precheckFileUpload(payload: { userId: string; contentMd5: string }) {
+  const file = await fileRepository.findByUserIdAndMd5(payload.userId, payload.contentMd5);
+
+  return {
+    exists: Boolean(file),
+    file: file
+      ? {
+          id: file.id,
+          fileName: file.fileName,
+          parseStatus: file.parseStatus,
+          uploadedAt: file.uploadedAt,
+        }
+      : null,
+  };
+}
+
+/**
  * 创建文件与任务记录，并触发异步 ingestion 模拟流程。
  * @param payload 上传参数（用户 ID 与文件二进制）。
  * @returns 上传结果。
@@ -206,7 +230,6 @@ export async function identifyUser(userId: string) {
 export async function uploadFile(payload: {
   userId: string;
   file: Express.Multer.File;
-  contentSha256?: string;
 }) {
   if (!payload.file.path) {
     throw createApiError(500, "UPLOAD_STORAGE_ERROR", "Upload file path not available");
@@ -217,7 +240,6 @@ export async function uploadFile(payload: {
     tempFilePath: payload.file.path,
     originalName: payload.file.originalname,
     sizeBytes: payload.file.size,
-    contentSha256: payload.contentSha256,
   });
 }
 
@@ -300,9 +322,7 @@ export async function uploadChunk(payload: {
   const chunkTargetPath = path.resolve(getChunkSessionDir(payload.uploadId), `${payload.chunkIndex}.part`);
   await rename(payload.file.path, chunkTargetPath);
 
-  const set = new Set(manifest.receivedChunks);
-  set.add(payload.chunkIndex);
-  manifest.receivedChunks = Array.from(set).sort((a, b) => a - b);
+  manifest.receivedChunks = await collectReceivedChunkIndices(payload.uploadId, manifest.totalChunks);
   await writeChunkManifest(manifest);
 
   return {

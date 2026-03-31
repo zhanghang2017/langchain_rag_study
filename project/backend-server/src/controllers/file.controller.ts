@@ -5,6 +5,7 @@ import {
   chunkUploadCompleteBodySchema,
   chunkUploadInitBodySchema,
   chunkUploadStatusQuerySchema,
+  filePrecheckBodySchema,
   filesQuerySchema,
   fingerprintSchema,
   ingestionCallbackBodySchema,
@@ -32,6 +33,23 @@ export async function identifyUser(req: Request, res: Response, next: NextFuncti
 }
 
 /**
+ * 上传前通过浏览器指纹与文件 MD5 检查是否已存在同一文件。
+ * @param req Express 请求对象。
+ * @param res Express 响应对象。
+ * @param next Express next 回调。
+ * @returns 返回去重预检结果。
+ */
+export async function precheckFileUpload(req: Request, res: Response, next: NextFunction) {
+  try {
+    const payload = validate(filePrecheckBodySchema, req.body || {}, "request body");
+    const result = await fileService.precheckFileUpload(payload);
+    res.json({ data: result });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * 创建文件元数据并同时创建 ingestion 任务。
  * @param req Express 请求对象。
  * @param res Express 响应对象。
@@ -50,7 +68,6 @@ export async function uploadFile(req: Request, res: Response, next: NextFunction
     const result = await fileService.uploadFile({
       userId: payload.userId,
       file: req.file,
-      contentSha256: payload.contentHash,
     });
     res.status(201).json({ data: result });
   } catch (error) {
@@ -93,7 +110,7 @@ export async function uploadChunk(req: Request, res: Response, next: NextFunctio
     const payload = validate(chunkUploadBodySchema, req.body || {}, "request body");
     if (!req.file) {
       throw createApiError(400, "VALIDATION_ERROR", "Invalid request body", [
-        { path: "chunk", message: "Required" },
+        { path: "file", message: "Required" },
       ]);
     }
 

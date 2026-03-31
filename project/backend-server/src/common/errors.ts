@@ -74,8 +74,8 @@ export function errorHandler(error: ApiError, _req: Request, res: Response, _nex
     return sendApiError(res, 404, "RESOURCE_NOT_FOUND", "Resource not found");
   }
 
-  if (error && error.code === "VALIDATION_ERROR") {
-    return sendApiError(res, error.status || 400, error.code, error.message, error.details);
+  if (error && error.code && error.status) {
+    return sendApiError(res, error.status, error.code, error.message, error.details);
   }
 
   // Hide unknown runtime errors behind a generic 500 response.

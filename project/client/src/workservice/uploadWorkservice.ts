@@ -1,10 +1,12 @@
+import SparkMD5 from "spark-md5";
+
 type UploadStatusTone = "success" | "warning" | "error";
 
 import {
   completeChunkUpload,
   getChunkUploadStatus,
-  getTaskById,
   initChunkUpload,
+  precheckUploadFile,
   uploadChunk,
   uploadFileDirect,
 } from "../api";
@@ -22,14 +24,14 @@ export type UploadLibraryRow = {
 
 type UploadCallbacks = {
   onUploadingProgress?: (percent: number) => void;
-  onTaskProgress?: (percent: number, status: string) => void;
-  onPhaseChange?: (phase: "hashing" | "uploading" | "indexing" | "done" | "failed") => void;
+  onPhaseChange?: (phase: "hashing" | "uploading" | "done" | "failed") => void;
 };
 
 const CHUNK_SIZE_BYTES = uploadConfig.chunkSizeBytes;
 const CHUNK_CONCURRENCY = uploadConfig.chunkConcurrency;
 const CHUNK_RETRY_LIMIT = uploadConfig.chunkRetryLimit;
 const SMALL_FILE_THRESHOLD_BYTES = uploadConfig.smallFileThresholdBytes;
+const HASH_CHUNK_SIZE_BYTES = 2 * 1024 * 1024;
 
 function formatFileSize(sizeBytes: number) {
   if (sizeBytes < 1024) return `${sizeBytes} B`;
@@ -56,15 +58,19 @@ function resolveIcon(fileName: string) {
 }
 
 /**
- * 计算文件 SHA-256，作为分片上传 uploadId。
+ * 计算文件 MD5，用于上传前去重校验与分片上传会话标识。
  * @param file 原始文件对象。
- * @returns 64 位十六进制哈希字符串。
+ * @returns 32 位十六进制哈希字符串。
  */
-async function computeFileSha256(file: File) {
-  const buffer = await file.arrayBuffer();
-  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((byte) => byte.toString(16).padStart(2, "0")).join("");
+async function computeFileMd5(file: File) {
+  const spark = new SparkMD5.ArrayBuffer();
+
+  for (let offset = 0; offset < file.size; offset += HASH_CHUNK_SIZE_BYTES) {
+    const chunk = await file.slice(offset, offset + HASH_CHUNK_SIZE_BYTES).arrayBuffer();
+    spark.append(chunk);
+  }
+
+  return spark.end();
 }
 
 /**
@@ -101,18 +107,17 @@ function getResumeStorageKey(file: File, userId: string) {
  * 调用小文件直传接口。
  * @param file 文件对象。
  * @param userId 用户 ID。
- * @param contentHash 文件 SHA-256 哈希，用于服务端完整性校验。
  * @returns 上传结果。
  */
-async function uploadSmallFile(file: File, userId: string, contentHash: string): Promise<UploadResult> {
-  return uploadFileDirect(file, userId, contentHash);
+async function uploadSmallFile(file: File, userId: string): Promise<UploadResult> {
+  return uploadFileDirect(file, userId);
 }
 
 /**
  * 初始化或恢复分片上传会话。
  * @param file 文件对象。
  * @param userId 用户 ID。
- * @param uploadId 文件哈希 uploadId。
+ * @param uploadId 文件 MD5 uploadId。
  * @returns 分片会话信息与缓存 key。
  */
 async function initOrResumeChunkSession(file: File, userId: string, uploadId: string) {
@@ -181,18 +186,16 @@ async function uploadChunkWithRetry(uploadId: string, chunkIndex: number, blob: 
  * 执行大文件分片上传。
  * @param file 文件对象。
  * @param userId 用户 ID。
+ * @param uploadId 分片会话 ID（文件 MD5）。
  * @param callbacks 进度与阶段回调。
  * @returns 上传结果。
  */
 async function uploadChunkedFile(
   file: File,
   userId: string,
+  uploadId: string,
   callbacks?: UploadCallbacks,
 ): Promise<UploadResult> {
-  callbacks?.onPhaseChange?.("hashing");
-  const uploadId = await computeFileSha256(file);
-  callbacks?.onPhaseChange?.("uploading");
-
   const session = await initOrResumeChunkSession(file, userId, uploadId);
   const uploadedSet = new Set(session.uploadedChunks);
   const totalChunks = session.totalChunks;
@@ -228,67 +231,36 @@ async function uploadChunkedFile(
 }
 
 /**
- * 轮询任务状态，直到进入终态。
- * @param taskId 任务 ID。
- * @param callbacks 进度回调。
- * @returns 最终任务状态对象。
- */
-async function pollTask(taskId: string, callbacks?: UploadCallbacks) {
-  while (true) {
-    const task = await getTaskById(taskId);
-    callbacks?.onTaskProgress?.(task.progress, task.status);
-
-    if (task.status === "success" || task.status === "failed" || task.status === "cancelled") {
-      return task;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-  }
-}
-
-/**
- * 对外统一上传入口：自动选择小文件直传或大文件分片上传，并在必要时轮询索引任务。
+ * 对外统一上传入口：自动选择小文件直传或大文件分片上传。
  * @param file 文件对象。
- * @param callbacks 上传/索引阶段回调。
+ * @param callbacks 上传阶段回调。
  * @returns 可直接渲染到知识库列表的一行数据。
  */
 export async function uploadFileToKnowledgeBase(file: File, callbacks?: UploadCallbacks): Promise<UploadLibraryRow> {
   const userId = getOrCreateUserId();
+  callbacks?.onPhaseChange?.("hashing");
+  const contentMd5 = await computeFileMd5(file);
+  const precheck = await precheckUploadFile(userId, contentMd5);
 
-  let result: UploadResult;
-  if (file.size <= SMALL_FILE_THRESHOLD_BYTES) {
-    callbacks?.onPhaseChange?.("hashing");
-    const contentHash = await computeFileSha256(file);
-    callbacks?.onPhaseChange?.("uploading");
-    result = await uploadSmallFile(file, userId, contentHash);
-  } else {
-    result = await uploadChunkedFile(file, userId, callbacks);
-  }
-
-  if (result.task?.id) {
-    callbacks?.onPhaseChange?.("indexing");
-    const finalTask = await pollTask(result.task.id, callbacks);
-    if (finalTask.status === "success") {
-      callbacks?.onPhaseChange?.("done");
-      return {
-        icon: resolveIcon(file.name),
-        name: file.name,
-        size: formatFileSize(file.size),
-        status: "Indexed",
-        statusTone: "success",
-        added: nowLabel(),
-      };
-    }
-
-    callbacks?.onPhaseChange?.("failed");
+  if (precheck.exists) {
+    callbacks?.onPhaseChange?.("done");
     return {
       icon: resolveIcon(file.name),
       name: file.name,
       size: formatFileSize(file.size),
-      status: "Failed",
-      statusTone: "error",
+      status: "Deduplicated",
+      statusTone: "success",
       added: nowLabel(),
     };
+  }
+
+  callbacks?.onPhaseChange?.("uploading");
+
+  let result: UploadResult;
+  if (file.size <= SMALL_FILE_THRESHOLD_BYTES) {
+    result = await uploadSmallFile(file, userId);
+  } else {
+    result = await uploadChunkedFile(file, userId, contentMd5, callbacks);
   }
 
   callbacks?.onPhaseChange?.("done");
@@ -297,8 +269,8 @@ export async function uploadFileToKnowledgeBase(file: File, callbacks?: UploadCa
     icon: resolveIcon(file.name),
     name: file.name,
     size: formatFileSize(file.size),
-    status: result.deduplicated ? "Deduplicated" : "Indexed",
-    statusTone: "success",
+    status: result.deduplicated ? "Deduplicated" : result.task?.id ? "Queued" : "Uploaded",
+    statusTone: result.task?.id ? "warning" : "success",
     added: nowLabel(),
   };
 }

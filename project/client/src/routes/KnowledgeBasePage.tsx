@@ -28,7 +28,7 @@ const KnowledgeBasePage = () => {
         icon: "upload_file",
         name: file.name,
         size: `${(file.size / 1024 / 1024).toFixed(1)} MB`,
-        status: "Uploading 0%",
+        status: "Checking",
         statusTone: "warning",
         added: "just now",
       };
@@ -53,26 +53,35 @@ const KnowledgeBasePage = () => {
             );
             setUploadMessage(`${file.name}: uploading ${value}%`);
           },
-          onTaskProgress: (percent, status) => {
-            const value = Math.floor(percent);
-            setUploadProgress(value);
-            setRows((prev) =>
-              prev.map((row) =>
-                row.name === file.name
-                  ? {
-                      ...row,
-                      status: status === "success" ? "Indexed" : `Indexing ${value}%`,
-                      statusTone: status === "failed" || status === "cancelled" ? "error" : "warning",
-                    }
-                  : row,
-              ),
-            );
-            setUploadMessage(`${file.name}: indexing ${value}%`);
-          },
           onPhaseChange: (phase) => {
             setUploadPhase(phase);
             if (phase === "hashing") {
+              setRows((prev) =>
+                prev.map((row) =>
+                  row.name === file.name
+                    ? {
+                        ...row,
+                        status: "Checking",
+                        statusTone: "warning",
+                      }
+                    : row,
+                ),
+              );
               setUploadMessage(`${file.name}: hashing...`);
+            }
+            if (phase === "uploading") {
+              setRows((prev) =>
+                prev.map((row) =>
+                  row.name === file.name
+                    ? {
+                        ...row,
+                        status: "Uploading",
+                        statusTone: "warning",
+                      }
+                    : row,
+                ),
+              );
+              setUploadMessage(`${file.name}: uploading...`);
             }
             if (phase === "done") {
               setUploadProgress(100);
@@ -81,7 +90,7 @@ const KnowledgeBasePage = () => {
         });
 
         setRows((prev) => prev.map((row) => (row.name === file.name ? result : row)));
-        setUploadMessage(`${file.name}: done`);
+        setUploadMessage(`${file.name}: ${result.status.toLowerCase()}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Upload failed";
         setRows((prev) =>

@@ -11,9 +11,10 @@ const router = Router();
 router.post("/users/identify", fileController.identifyUser);
 
 // Upload route requires multipart field `file` and fingerprint payload.
+router.post("/files/precheck", requireFingerprint, fileController.precheckFileUpload);
 router.post("/files/upload", upload.single("file"), requireFingerprint, fileController.uploadFile);
 router.post("/files/upload/chunked/init", fileController.initChunkUpload);
-router.post("/files/upload/chunked/chunk", upload.single("chunk"), fileController.uploadChunk);
+router.post("/files/upload/chunked/chunk", upload.single("file"), fileController.uploadChunk);
 router.get("/files/upload/chunked/status", fileController.getChunkUploadStatus);
 router.post("/files/upload/chunked/complete", fileController.completeChunkUpload);
 router.get("/files", requireFingerprint, fileController.getFiles);

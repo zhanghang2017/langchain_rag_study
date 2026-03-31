@@ -5,6 +5,16 @@ export type UploadResult = {
   task: { id: string } | null;
 };
 
+export type UploadPrecheckResult = {
+  exists: boolean;
+  file: {
+    id: string;
+    fileName: string;
+    parseStatus: string;
+    uploadedAt: string;
+  } | null;
+};
+
 export type ChunkSession = {
   uploadId: string;
   totalChunks: number;
@@ -12,16 +22,28 @@ export type ChunkSession = {
 };
 
 /**
+ * 上传前检查当前用户是否已存在相同 MD5 的文件。
+ * @param userId 用户 ID（浏览器指纹）。
+ * @param contentMd5 文件 MD5。
+ * @returns 预检结果。
+ */
+export async function precheckUploadFile(userId: string, contentMd5: string): Promise<UploadPrecheckResult> {
+  return requestApi<UploadPrecheckResult>("/files/precheck", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId, contentMd5 }),
+  });
+}
+
+/**
  * 直传小文件接口。
  * @param file 原始文件。
  * @param userId 用户 ID（浏览器指纹）。
- * @param contentHash 文件 SHA-256 哈希，供服务端完整性校验。
  * @returns 上传结果。
  */
-export async function uploadFileDirect(file: File, userId: string, contentHash: string): Promise<UploadResult> {
+export async function uploadFileDirect(file: File, userId: string): Promise<UploadResult> {
   const formData = new FormData();
   formData.append("userId", userId);
-  formData.append("contentHash", contentHash);
   formData.append("file", file);
 
   return requestApi<UploadResult>("/files/upload", {
@@ -69,7 +91,7 @@ export async function uploadChunk(uploadId: string, chunkIndex: number, blob: Bl
   const formData = new FormData();
   formData.append("uploadId", uploadId);
   formData.append("chunkIndex", String(chunkIndex));
-  formData.append("chunk", blob);
+  formData.append("file", blob);
 
   return requestApi<ChunkSession>("/files/upload/chunked/chunk", {
     method: "POST",
