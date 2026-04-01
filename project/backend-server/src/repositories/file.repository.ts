@@ -1,5 +1,16 @@
 import { prisma } from "../lib/prisma";
 
+type FileParseStatus = "pending" | "processing" | "failed" | "indexed";
+
+export type FileChunkSyncRecord = {
+  chunkIndex: number;
+  vectorId: string;
+  collectionName: string;
+  chunkHash: string;
+  contentPreview: string;
+  pageNumber: number | null;
+};
+
 /**
  * 在单个事务中创建用户、文件与任务记录。
  * @param payload 上传元数据参数。
@@ -30,7 +41,9 @@ export async function createFileAndTask(payload: {
         contentMd5: payload.contentMd5,
         fileSizeBytes: payload.fileSizeBytes,
         storagePath: payload.storagePath,
-        parseStatus: "queued",
+        parseStatus: "pending",
+        parseVersion: 1,
+        chunkCount: 0,
       },
     });
 
@@ -64,6 +77,12 @@ export async function findByUserIdAndMd5(userId: string, contentMd5: string) {
   });
 }
 
+export async function findFileById(fileId: string) {
+  return prisma.knowledgeFile.findUnique({
+    where: { id: fileId },
+  });
+}
+
 /**
  * 按条件查询文件列表。
  * @param where 查询过滤条件。
@@ -71,14 +90,23 @@ export async function findByUserIdAndMd5(userId: string, contentMd5: string) {
  * @returns 文件记录数组。
  */
 export async function listFiles(
-  where: { userId: string; parseStatus?: "queued" | "running" | "success" | "failed" | "cancelled" },
+  where: { userId: string; parseStatus?: FileParseStatus },
+  page: number,
   limit: number,
 ) {
-  return prisma.knowledgeFile.findMany({
-    where,
-    orderBy: { uploadedAt: "desc" },
-    take: limit,
-  });
+  const skip = (page - 1) * limit;
+
+  const [items, total] = await prisma.$transaction([
+    prisma.knowledgeFile.findMany({
+      where,
+      orderBy: { uploadedAt: "desc" },
+      skip,
+      take: limit,
+    }),
+    prisma.knowledgeFile.count({ where }),
+  ]);
+
+  return { items, total };
 }
 
 /**
@@ -89,10 +117,43 @@ export async function listFiles(
  */
 export async function updateFileById(
   fileId: string,
-  data: { parseStatus?: "queued" | "running" | "success" | "failed" | "cancelled" },
+  data: {
+    parseStatus?: FileParseStatus;
+    parseVersion?: number;
+    chunkCount?: number;
+    indexedAt?: Date | null;
+  },
 ) {
   return prisma.knowledgeFile.update({
     where: { id: fileId },
     data,
+  });
+}
+
+export async function replaceFileChunks(
+  fileId: string,
+  chunks: FileChunkSyncRecord[],
+) {
+  return prisma.$transaction(async (tx) => {
+    await tx.fileChunk.deleteMany({ where: { fileId } });
+
+    if (chunks.length > 0) {
+      await tx.fileChunk.createMany({
+        data: chunks.map((chunk) => ({
+          fileId,
+          chunkIndex: chunk.chunkIndex,
+          vectorId: chunk.vectorId,
+          collectionName: chunk.collectionName,
+          chunkHash: chunk.chunkHash,
+          contentPreview: chunk.contentPreview,
+          pageNumber: chunk.pageNumber,
+        })),
+      });
+    }
+
+    return tx.fileChunk.findMany({
+      where: { fileId },
+      orderBy: { chunkIndex: "asc" },
+    });
   });
 }

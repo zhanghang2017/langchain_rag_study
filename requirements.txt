@@ -1,6 +1,12 @@
 langchain_community==0.4.1
+langchain_chroma==0.2.6
 langchain_core==1.2.23
 langchain_openai==1.1.12
+langchain_text_splitters==1.0.0
 python-dotenv==1.2.2
 dashscope==1.25.15
 pypdf==6.9.2
+fastapi==0.116.1
+uvicorn==0.35.0
+httpx==0.28.1
+docx2txt==0.9

@@ -14,7 +14,7 @@ type SchedulerRepository = {
   ) => Promise<unknown>;
   updateFileById: (
     fileId: string,
-    data: { parseStatus?: "queued" | "running" | "success" | "failed" | "cancelled" },
+    data: { parseStatus?: "pending" | "processing" | "failed" | "indexed" },
   ) => Promise<unknown>;
 };
 
@@ -49,7 +49,7 @@ export function createIngestionScheduler(repo: SchedulerRepository) {
         });
 
         await repo.updateFileById(runningTask.fileId, {
-          parseStatus: "running",
+          parseStatus: "processing",
         });
       } catch (error) {
         console.error("Failed to mark ingestion task as running", error);
@@ -84,7 +84,7 @@ export function createIngestionScheduler(repo: SchedulerRepository) {
         });
 
         await repo.updateFileById(task.fileId, {
-          parseStatus: "success",
+          parseStatus: "indexed",
         });
       } catch (error) {
         console.error("Failed to finalize ingestion task", error);

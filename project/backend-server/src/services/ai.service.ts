@@ -13,7 +13,8 @@ interface AiChatResult {
 
 const AI_SERVICE_BASE_URL = process.env.AI_SERVICE_BASE_URL || "http://127.0.0.1:8000";
 const AI_SERVICE_TIMEOUT_MS = Number(process.env.AI_SERVICE_TIMEOUT_MS || 12000);
-const ingestionEndpoint = process.env.AI_INGESTION_ENDPOINT;
+const ingestionEndpoint = process.env.AI_INGESTION_ENDPOINT || `${AI_SERVICE_BASE_URL}/ingestion/jobs`;
+const aiServiceSharedSecret = process.env.AI_SERVICE_SHARED_SECRET || "";
 
 /**
  * 将聊天请求转发到 Python AI 服务，并统一上游异常语义。
@@ -70,18 +71,31 @@ export async function requestChat(payload: AiChatPayload): Promise<AiChatResult>
 export async function dispatchIngestionTask(payload: {
   taskId: string;
   fileId: string;
+  userId: string;
+  fileName: string;
+  fileExt: string;
+  fileSizeBytes: number;
+  contentMd5: string;
   storagePath: string;
+  absoluteFilePath: string;
+  parseVersion: number;
 }) {
   if (!ingestionEndpoint) {
     return;
   }
 
   try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+
+    if (aiServiceSharedSecret) {
+      headers["x-ai-service-secret"] = aiServiceSharedSecret;
+    }
+
     await fetch(ingestionEndpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify(payload),
     });
   } catch {

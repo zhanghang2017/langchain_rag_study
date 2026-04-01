@@ -3,23 +3,39 @@ import SparkMD5 from "spark-md5";
 type UploadStatusTone = "success" | "warning" | "error";
 
 import {
+  dispatchPendingKnowledgeFile,
   completeChunkUpload,
+  getKnowledgeFiles,
   getChunkUploadStatus,
   initChunkUpload,
   precheckUploadFile,
   uploadChunk,
   uploadFileDirect,
 } from "../api";
-import type { UploadResult } from "../api";
+import type { FileParseStatus, KnowledgeFileInfo, KnowledgeFilesPage, UploadResult } from "../api";
 import { uploadConfig } from "./uploadConfig";
 
+export type KnowledgeBaseUploadOutcome = {
+  alreadyExists: boolean;
+};
+
+export type KnowledgeBaseFilter = "all" | FileParseStatus;
+
+export type KnowledgeBaseRowsPage = {
+  rows: UploadLibraryRow[];
+  pagination: KnowledgeFilesPage["pagination"];
+};
+
 export type UploadLibraryRow = {
+  id: string;
   icon: string;
   name: string;
   size: string;
   status: string;
   statusTone: UploadStatusTone;
   added: string;
+  rawStatus: FileParseStatus;
+  canDispatch: boolean;
 };
 
 type UploadCallbacks = {
@@ -42,8 +58,26 @@ function formatFileSize(sizeBytes: number) {
   return `${(mb / 1024).toFixed(1)} GB`;
 }
 
-function nowLabel() {
-  return "just now";
+function formatAddedLabel(uploadedAt: string) {
+  const date = new Date(uploadedAt);
+  const diffMs = Date.now() - date.getTime();
+
+  if (Number.isNaN(date.getTime()) || diffMs < 0) {
+    return uploadedAt;
+  }
+
+  const minutes = Math.floor(diffMs / (1000 * 60));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days}d ago`;
+
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(date);
 }
 
 function resolveIcon(fileName: string) {
@@ -55,6 +89,36 @@ function resolveIcon(fileName: string) {
     return "image";
   }
   return "draft";
+}
+
+function resolveStatusDisplay(status: FileParseStatus) {
+  switch (status) {
+    case "indexed":
+      return { label: "Indexed", tone: "success" as const };
+    case "failed":
+      return { label: "Failed", tone: "error" as const };
+    case "processing":
+      return { label: "Processing", tone: "warning" as const };
+    case "pending":
+    default:
+      return { label: "Pending", tone: "warning" as const };
+  }
+}
+
+export function mapKnowledgeFileToRow(file: KnowledgeFileInfo): UploadLibraryRow {
+  const statusDisplay = resolveStatusDisplay(file.parseStatus);
+
+  return {
+    id: file.id,
+    icon: resolveIcon(file.fileName),
+    name: file.fileName,
+    size: formatFileSize(file.fileSizeBytes),
+    status: statusDisplay.label,
+    statusTone: statusDisplay.tone,
+    added: formatAddedLabel(file.uploadedAt),
+    rawStatus: file.parseStatus,
+    canDispatch: file.parseStatus === "pending"||file.parseStatus === "failed",
+  };
 }
 
 /**
@@ -78,7 +142,7 @@ async function computeFileMd5(file: File) {
  * 会自动兼容并迁移旧的 localStorage key。
  * @returns 用户 ID 字符串。
  */
-function getOrCreateUserId() {
+export function getOrCreateUserId() {
   const key = "rag.userId";
   const legacyKey = "rag.browserFingerprintHash";
   const existed = localStorage.getItem(key) || localStorage.getItem(legacyKey);
@@ -91,6 +155,29 @@ function getOrCreateUserId() {
   const created = crypto.randomUUID();
   localStorage.setItem(key, created);
   return created;
+}
+
+export async function fetchKnowledgeBaseRows(
+  filter: KnowledgeBaseFilter = "all",
+  page = 1,
+  limit = 10,
+): Promise<KnowledgeBaseRowsPage> {
+  const userId = getOrCreateUserId();
+  const response = await getKnowledgeFiles(userId, {
+    parseStatus: filter === "all" ? undefined : filter,
+    page,
+    limit,
+  });
+
+  return {
+    rows: response.items.map(mapKnowledgeFileToRow),
+    pagination: response.pagination,
+  };
+}
+
+export async function requestPendingFileIngestion(fileId: string) {
+  const userId = getOrCreateUserId();
+  return dispatchPendingKnowledgeFile(fileId, userId);
 }
 
 /**
@@ -234,9 +321,9 @@ async function uploadChunkedFile(
  * 对外统一上传入口：自动选择小文件直传或大文件分片上传。
  * @param file 文件对象。
  * @param callbacks 上传阶段回调。
- * @returns 可直接渲染到知识库列表的一行数据。
+ * @returns 上传流程结果；知识库列表应通过后端文件接口刷新。
  */
-export async function uploadFileToKnowledgeBase(file: File, callbacks?: UploadCallbacks): Promise<UploadLibraryRow> {
+export async function uploadFileToKnowledgeBase(file: File, callbacks?: UploadCallbacks): Promise<KnowledgeBaseUploadOutcome> {
   const userId = getOrCreateUserId();
   callbacks?.onPhaseChange?.("hashing");
   const contentMd5 = await computeFileMd5(file);
@@ -244,33 +331,17 @@ export async function uploadFileToKnowledgeBase(file: File, callbacks?: UploadCa
 
   if (precheck.exists) {
     callbacks?.onPhaseChange?.("done");
-    return {
-      icon: resolveIcon(file.name),
-      name: file.name,
-      size: formatFileSize(file.size),
-      status: "Deduplicated",
-      statusTone: "success",
-      added: nowLabel(),
-    };
+    return { alreadyExists: true };
   }
 
   callbacks?.onPhaseChange?.("uploading");
 
-  let result: UploadResult;
   if (file.size <= SMALL_FILE_THRESHOLD_BYTES) {
-    result = await uploadSmallFile(file, userId);
+    await uploadSmallFile(file, userId);
   } else {
-    result = await uploadChunkedFile(file, userId, contentMd5, callbacks);
+    await uploadChunkedFile(file, userId, contentMd5, callbacks);
   }
 
   callbacks?.onPhaseChange?.("done");
-
-  return {
-    icon: resolveIcon(file.name),
-    name: file.name,
-    size: formatFileSize(file.size),
-    status: result.deduplicated ? "Deduplicated" : result.task?.id ? "Queued" : "Uploaded",
-    statusTone: result.task?.id ? "warning" : "success",
-    added: nowLabel(),
-  };
+  return { alreadyExists: false };
 }

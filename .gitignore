@@ -6,6 +6,7 @@ __pycache__/
 # Virtual environments
 .venv/
 .venv*/*
+project/AI-server/.venv/
 venv/
 env/
 ENV/

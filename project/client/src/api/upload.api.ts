@@ -1,8 +1,52 @@
-import { requestApi } from "./httpClient";
+import { createApiUrl, requestApi } from "./httpClient";
+
+export type FileParseStatus = "pending" | "processing" | "failed" | "indexed";
+
+export type KnowledgeFileInfo = {
+  id: string;
+  fileName: string;
+  fileSizeBytes: number;
+  parseStatus: FileParseStatus;
+  uploadedAt: string;
+};
+
+export type KnowledgeFilesPage = {
+  items: KnowledgeFileInfo[];
+  pagination: {
+    page: number;
+    limit: number;
+    totalItems: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+  };
+};
+
+export type IngestionStreamEvent = {
+  type: string;
+  timestamp: string;
+  file?: KnowledgeFileInfo;
+  task?: {
+    id: string;
+    status: string;
+    progress: number;
+    errorMessage: string | null;
+  };
+};
 
 export type UploadResult = {
-  deduplicated: boolean;
-  task: { id: string } | null;
+  file: KnowledgeFileInfo;
+};
+
+export type ManualIngestionDispatchResult = {
+  accepted: boolean;
+  file: KnowledgeFileInfo;
+  task: {
+    id: string;
+    status: string;
+    progress: number;
+    errorMessage: string | null;
+  };
 };
 
 export type UploadPrecheckResult = {
@@ -10,7 +54,7 @@ export type UploadPrecheckResult = {
   file: {
     id: string;
     fileName: string;
-    parseStatus: string;
+    parseStatus: FileParseStatus;
     uploadedAt: string;
   } | null;
 };
@@ -33,6 +77,33 @@ export async function precheckUploadFile(userId: string, contentMd5: string): Pr
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ userId, contentMd5 }),
   });
+}
+
+/**
+ * 获取当前用户知识库文件列表。
+ * @param userId 用户 ID（浏览器指纹）。
+ * @param options 查询参数。
+ * @returns 文件列表。
+ */
+export async function getKnowledgeFiles(
+  userId: string,
+  options?: { parseStatus?: FileParseStatus; page?: number; limit?: number },
+): Promise<KnowledgeFilesPage> {
+  const params = new URLSearchParams({ userId });
+
+  if (options?.parseStatus) {
+    params.set("parseStatus", options.parseStatus);
+  }
+
+  if (typeof options?.page === "number") {
+    params.set("page", String(options.page));
+  }
+
+  if (typeof options?.limit === "number") {
+    params.set("limit", String(options.limit));
+  }
+
+  return requestApi<KnowledgeFilesPage>(`/files?${params.toString()}`);
 }
 
 /**
@@ -110,4 +181,17 @@ export async function completeChunkUpload(uploadId: string): Promise<UploadResul
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ uploadId }),
   });
+}
+
+export async function dispatchPendingKnowledgeFile(fileId: string, userId: string): Promise<ManualIngestionDispatchResult> {
+  return requestApi<ManualIngestionDispatchResult>(`/files/${encodeURIComponent(fileId)}/ingest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId }),
+  });
+}
+
+export function createKnowledgeBaseEventSource(userId: string) {
+  const params = new URLSearchParams({ userId });
+  return new EventSource(createApiUrl(`/files/events?${params.toString()}`));
 }

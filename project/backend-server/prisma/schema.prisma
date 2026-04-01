@@ -15,6 +15,13 @@ enum TaskStatus {
   cancelled
 }
 
+enum FileParseStatus {
+  pending
+  processing
+  failed
+  indexed
+}
+
 enum MessageRole {
   user
   assistant
@@ -38,7 +45,10 @@ model KnowledgeFile {
   contentMd5    String?         @map("content_md5")
   fileSizeBytes Int             @map("file_size_bytes")
   storagePath   String          @map("storage_path")
-  parseStatus   TaskStatus      @default(queued) @map("parse_status")
+  parseStatus   FileParseStatus @default(pending) @map("parse_status")
+  parseVersion  Int             @default(1) @map("parse_version")
+  chunkCount    Int             @default(0) @map("chunk_count")
+  indexedAt     DateTime?       @map("indexed_at")
   uploadedAt    DateTime        @default(now()) @map("uploaded_at")
   user          AppUser         @relation(fields: [userId], references: [id], onDelete: Cascade)
   ingestionTasks IngestionTask[]
@@ -57,6 +67,7 @@ model IngestionTask {
   progress     Float        @default(0)
   errorMessage String?      @map("error_message")
   createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @default(now()) @updatedAt @map("updated_at")
   user         AppUser      @relation(fields: [userId], references: [id], onDelete: Cascade)
   file         KnowledgeFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
 
@@ -70,6 +81,10 @@ model FileChunk {
   fileId     String       @map("file_id")
   chunkIndex Int          @map("chunk_index")
   vectorId   String       @unique @map("vector_id")
+  collectionName String   @map("collection_name")
+  chunkHash  String       @map("chunk_hash")
+  contentPreview String   @map("content_preview")
+  pageNumber Int?         @map("page_number")
   createdAt  DateTime     @default(now()) @map("created_at")
   file       KnowledgeFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
 

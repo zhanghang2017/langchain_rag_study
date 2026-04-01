@@ -11,6 +11,13 @@ export async function findTaskById(taskId: string) {
   });
 }
 
+export async function findLatestTaskByFileId(fileId: string) {
+  return prisma.ingestionTask.findFirst({
+    where: { fileId },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
 /**
  * 更新 ingestion 任务运行时字段（状态、进度、错误信息）。
  * @param taskId 任务 ID。
@@ -19,7 +26,11 @@ export async function findTaskById(taskId: string) {
  */
 export async function updateTaskById(
   taskId: string,
-  data: { status?: "queued" | "running" | "success" | "failed" | "cancelled"; progress?: number; errorMessage?: string | null },
+  data: {
+    status?: "queued" | "running" | "success" | "failed" | "cancelled";
+    progress?: number;
+    errorMessage?: string | null;
+  },
 ) {
   return prisma.ingestionTask.update({
     where: { id: taskId },

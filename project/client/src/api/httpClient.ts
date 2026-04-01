@@ -7,6 +7,10 @@
  */
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001/v1";
 
+export function createApiUrl(path: string) {
+  return `${API_BASE_URL}${path}`;
+}
+
 type ApiEnvelope<T> = {
   data?: T;
   error?: {
@@ -23,7 +27,7 @@ type ApiEnvelope<T> = {
  * @throws 当 HTTP 状态非 2xx 或返回结构不合法时抛出 Error。
  */
 export async function requestApi<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, init);
+  const response = await fetch(createApiUrl(path), init);
   const payload = (await response.json()) as ApiEnvelope<T>;
 
   if (!response.ok) {

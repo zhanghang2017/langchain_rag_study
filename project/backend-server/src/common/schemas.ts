@@ -82,13 +82,14 @@ export const chunkUploadCompleteBodySchema = z.object({
   uploadId: md5HexSchema,
 });
 
-// Shared enum for knowledge-file parse lifecycle; kept aligned with ingestion task status.
-const parseStatusEnum = z.enum(["queued", "running", "success", "failed", "cancelled"]);
+// Knowledge-file parse lifecycle exposed to the frontend.
+const parseStatusEnum = z.enum(["pending", "processing", "failed", "indexed"]);
 
 export const filesQuerySchema = z.object({
   userId: z.string().min(1).optional(),
   browserFingerprintHash: z.string().min(1).optional(),
   parseStatus: parseStatusEnum.optional(),
+  page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 })
   .superRefine((data, ctx) => {
@@ -99,11 +100,16 @@ export const filesQuerySchema = z.object({
   .transform((data) => ({
     userId: resolveRequiredUserId(data)!,
     parseStatus: data.parseStatus,
+    page: data.page,
     limit: data.limit,
   }));
 
 export const taskParamsSchema = z.object({
   taskId: z.string().uuid(),
+});
+
+export const fileParamsSchema = z.object({
+  fileId: z.string().uuid(),
 });
 
 export const createSessionBodySchema = z
@@ -167,9 +173,47 @@ export const aiChatBodySchema = z
 
 const taskStatusEnum = z.enum(["queued", "running", "success", "failed", "cancelled"]);
 
+export const ingestionChunkSyncBodySchema = z
+  .object({
+    taskId: z.string().uuid(),
+    fileId: z.string().uuid(),
+    userId: z.string().min(1).optional(),
+    browserFingerprintHash: z.string().min(1).optional(),
+    collectionName: z.string().min(1),
+    parseVersion: z.coerce.number().int().min(1).default(1),
+    chunks: z.array(z.object({
+      chunkIndex: z.coerce.number().int().min(0),
+      vectorId: z.string().min(1),
+      chunkHash: z.string().min(1),
+      contentPreview: z.string().min(1),
+      pageNumber: z.coerce.number().int().min(0).nullable().optional(),
+    })).default([]),
+  })
+  .superRefine((data, ctx) => {
+    if (!resolveRequiredUserId(data)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["userId"], message: "Required" });
+    }
+  })
+  .transform((data) => ({
+    taskId: data.taskId,
+    fileId: data.fileId,
+    userId: resolveRequiredUserId(data)!,
+    collectionName: data.collectionName,
+    parseVersion: data.parseVersion,
+    chunks: data.chunks.map((chunk) => ({
+      chunkIndex: chunk.chunkIndex,
+      vectorId: chunk.vectorId,
+      chunkHash: chunk.chunkHash,
+      contentPreview: chunk.contentPreview,
+      pageNumber: chunk.pageNumber ?? null,
+    })),
+  }));
+
 export const ingestionCallbackBodySchema = z.object({
   taskId: z.string().uuid(),
+  fileId: z.string().uuid().optional(),
   status: taskStatusEnum,
   progress: z.number().min(0).max(100).optional(),
-  errorMessage: z.string().optional(),
+  chunkCount: z.coerce.number().int().min(0).nullable().optional(),
+  errorMessage: z.string().nullable().optional(),
 });

@@ -8,7 +8,7 @@ export const app = express();
 // Cross-origin access is enabled for MVP frontend integration.
 app.use(cors());
 // Parse JSON request bodies for all API handlers.
-app.use(express.json());
+app.use(express.json({ limit: "5mb" }));
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });

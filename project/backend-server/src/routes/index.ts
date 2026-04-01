@@ -18,6 +18,8 @@ router.post("/files/upload/chunked/chunk", upload.single("file"), fileController
 router.get("/files/upload/chunked/status", fileController.getChunkUploadStatus);
 router.post("/files/upload/chunked/complete", fileController.completeChunkUpload);
 router.get("/files", requireFingerprint, fileController.getFiles);
+router.post("/files/:fileId/ingest", requireFingerprint, fileController.dispatchPendingFileIngestion);
+router.get("/files/events", requireFingerprint, fileController.streamFileEvents);
 router.get("/tasks/:taskId", fileController.getTask);
 
 // Chat routes map session and message operations.

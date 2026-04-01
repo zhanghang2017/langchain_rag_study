@@ -3,8 +3,10 @@ import { createApiError } from "../common/errors";
 import {
   chunkUploadBodySchema,
   chunkUploadCompleteBodySchema,
+  ingestionChunkSyncBodySchema,
   chunkUploadInitBodySchema,
   chunkUploadStatusQuerySchema,
+  fileParamsSchema,
   filePrecheckBodySchema,
   filesQuerySchema,
   fingerprintSchema,
@@ -54,7 +56,7 @@ export async function precheckFileUpload(req: Request, res: Response, next: Next
  * @param req Express 请求对象。
  * @param res Express 响应对象。
  * @param next Express next 回调。
- * @returns 写入 201 成功响应或将错误传递给全局错误中间件。
+ * @returns 返回上传成功后的文件摘要。
  */
 export async function uploadFile(req: Request, res: Response, next: NextFunction) {
   try {
@@ -147,7 +149,7 @@ export async function getChunkUploadStatus(req: Request, res: Response, next: Ne
  * @param req Express 请求对象。
  * @param res Express 响应对象。
  * @param next Express next 回调。
- * @returns 返回最终 file/task 结果。
+ * @returns 返回上传成功后的文件摘要。
  */
 export async function completeChunkUpload(req: Request, res: Response, next: NextFunction) {
   try {
@@ -172,6 +174,7 @@ export async function getFiles(req: Request, res: Response, next: NextFunction) 
     const files = await fileService.getFiles({
       userId: query.userId,
       parseStatus: query.parseStatus,
+      page: query.page,
       limit: query.limit,
     });
     res.json({ data: files });
@@ -197,6 +200,17 @@ export async function getTask(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function dispatchPendingFileIngestion(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { fileId } = validate(fileParamsSchema, req.params || {}, "path params");
+    const { userId } = validate(fingerprintSchema, req.body || {}, "request body");
+    const result = await fileService.dispatchPendingFileIngestion({ userId, fileId });
+    res.status(202).json({ data: result });
+  } catch (error) {
+    next(error);
+  }
+}
+
 /**
  * 接收 AI 服务回调并更新任务/文件状态。
  * @param req Express 请求对象。
@@ -209,6 +223,25 @@ export async function ingestionCallback(req: Request, res: Response, next: NextF
     const payload = validate(ingestionCallbackBodySchema, req.body || {}, "request body");
     const result = await fileService.handleIngestionCallback(payload);
     res.json({ data: result });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function syncIngestionChunks(req: Request, res: Response, next: NextFunction) {
+  try {
+    const payload = validate(ingestionChunkSyncBodySchema, req.body || {}, "request body");
+    const result = await fileService.syncIngestionChunks(payload);
+    res.json({ data: result });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function streamFileEvents(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { userId } = validate(fingerprintSchema, req.query || {}, "query params");
+    fileService.streamFileEvents(userId, res);
   } catch (error) {
     next(error);
   }

@@ -151,14 +151,12 @@ Response `201`:
 ```json
 {
   "data": {
-    "deduplicated": false,
     "file": {
       "id": "uuid",
-      "userId": "fp_xxx",
-      "storagePath": "upload/fp_xxx/0f343b0931126a20f133d67c2b018a3b.pdf"
-    },
-    "task": {
-      "id": "uuid"
+      "fileName": "manual.pdf",
+      "fileSizeBytes": 104857600,
+      "parseStatus": "pending",
+      "uploadedAt": "2026-04-01T12:00:00.000Z"
     }
   }
 }
@@ -246,7 +244,7 @@ Response `200`:
 
 #### POST /v1/files/upload/chunked/complete
 
-Description: merge all uploaded chunks, then run server-side md5 dedupe + ingestion task creation.
+Description: merge all uploaded chunks, then run server-side md5 persistence and ingestion dispatch.
 
 Request Body:
 
@@ -272,7 +270,7 @@ This section defines the recommended client-side flow for large-file upload, res
 - If file size is small (for example <= 20 MB), client can call POST /v1/files/upload directly.
 - If file size is large, client should use the chunked upload APIs below.
 
-2. Initialize upload session
+1. Initialize upload session
 
 - Call POST /v1/files/upload/chunked/init with:
   - userId
@@ -282,7 +280,7 @@ This section defines the recommended client-side flow for large-file upload, res
   - totalChunks
 - Persist uploadId locally (memory + localStorage/IndexedDB) for resume.
 
-3. Upload chunks (can be concurrent)
+1. Upload chunks (can be concurrent)
 
 - Split file into fixed chunks.
 - Recommended chunk size: 2 MB to 8 MB.
@@ -292,42 +290,41 @@ This section defines the recommended client-side flow for large-file upload, res
   - chunkIndex
   - file (binary)
 
-4. Retry policy
+1. Retry policy
 
 - On network/server transient failure, retry current chunk.
 - Recommended retry count: up to 3 times per chunk.
 - Recommended backoff: 500 ms, 1000 ms, 2000 ms.
 - If a chunk still fails after max retries, pause upload and keep uploadId for resume.
 
-5. Resume policy (breakpoint continuation)
+1. Resume policy (breakpoint continuation)
 
 - On app refresh/reopen, call GET /v1/files/upload/chunked/status?uploadId=...
 - Read uploadedChunks and skip uploaded indices.
 - Continue uploading only missing chunk indices.
 
-6. Complete upload
+1. Complete upload
 
 - After all indices [0..totalChunks-1] are uploaded, call POST /v1/files/upload/chunked/complete.
 - Server merges chunks, computes MD5, writes metadata, and creates ingestion task.
 
-7. Post-complete handling
+1. Post-complete handling
 
-- On success, response contains a queued ingestion task.
+- On success, response contains the created file summary only.
+- The ingestion task is created internally and subsequent status changes are delivered through the file list plus SSE events.
 - If client skipped precheck or a concurrent upload won the race, server may return `409 FILE_ALREADY_EXISTS`.
 
-8. UI state recommendations
+1. UI state recommendations
 
 - Show upload progress during chunk transfer.
-- Show `Queued` after upload completes and before any AI callback updates arrive.
+- After upload completes, refresh `/v1/files` and rely on SSE updates for later ingestion changes.
 - Keep uploadId bound to a file fingerprint (name + size + lastModified) on client for resume UX.
 - Server stores final files under `upload/<userId>/...`.
 
-9. Suggested completion criteria
+1. Suggested completion criteria
 
 - Upload phase completed when complete API returns 201.
-- Knowledge readiness completed when:
-  - task status is success, and
-  - related file parseStatus is success.
+- Knowledge readiness completed when related file `parseStatus` becomes `indexed`.
 
 ### GET /v1/files
 
@@ -418,8 +415,15 @@ Response `200`:
 ```json
 {
   "data": {
-    "task": {},
-    "file": {}
+    "items": [],
+    "pagination": {
+      "page": 1,
+      "limit": 5,
+      "totalItems": 0,
+      "totalPages": 1,
+      "hasPreviousPage": false,
+      "hasNextPage": false
+    }
   }
 }
 ```
@@ -560,10 +564,10 @@ Error `404`:
 
 After `POST /v1/files/upload`, backend returns success immediately for new files, then relies on AI callback updates:
 
-1. initial task `queued`, file `queued`
-2. callback `running` -> file `running`
-3. callback `success` -> file `success`
+1. initial task `queued`, file `pending`
+1. callback `running` -> file `processing`
+1. callback `success` -> file `indexed`
 
 Failure path:
 
-- callback `failed` or `cancelled` -> file uses the same terminal status
+- callback `failed` or `cancelled` -> file becomes `failed`
